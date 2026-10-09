@@ -13,11 +13,21 @@ from fpdf import FPDF
 
 
 load_dotenv(Path(__file__).with_name(".env"), override=True)
-OLLAMA_API_KEY = os.getenv("OLLAMA_API_KEY", "").strip()
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "").strip().rstrip("/")
-OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "").strip()
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "").strip()
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "").strip()
+
+
+def get_config_value(name):
+    try:
+        value = st.secrets.get(name, os.getenv(name, ""))
+    except st.errors.StreamlitSecretNotFoundError:
+        value = os.getenv(name, "")
+    return str(value or "").strip()
+
+
+OLLAMA_API_KEY = get_config_value("OLLAMA_API_KEY")
+OLLAMA_BASE_URL = get_config_value("OLLAMA_BASE_URL").rstrip("/")
+OLLAMA_MODEL = get_config_value("OLLAMA_MODEL")
+GEMINI_API_KEY = get_config_value("GEMINI_API_KEY")
+OPENAI_API_KEY = get_config_value("OPENAI_API_KEY")
 CONFIG_VALUES = {
     "OLLAMA_API_KEY": OLLAMA_API_KEY,
     "OLLAMA_BASE_URL": OLLAMA_BASE_URL,
