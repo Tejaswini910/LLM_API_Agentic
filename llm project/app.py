@@ -116,13 +116,62 @@ Do not use outside knowledge, unstated facts, or topics not explicitly supported
 Each question must include an evidence field copied verbatim as one contiguous excerpt from the syllabus that supports the correct answer. Do not invent or paraphrase evidence.
 Use four answer choices labeled A, B, C, D, and one unambiguous correct answer. Keep distractors within the syllabus vocabulary and do not require outside facts to reject them.
 Difficulty request: {difficulty}. Marks per question: {marks}.
-Return only valid JSON in this shape:
+Return only a single valid JSON object, with no Markdown fences or text before or after it, in this shape:
 {{"title":"{title}","questions":[{{"question":"...","options":{{"A":"...","B":"...","C":"...","D":"..."}},"answer":"A","difficulty":"Easy|Medium|Hard","marks":{marks},"evidence":"exact copied excerpt"}}]}}
 
 ACTIVE SYLLABUS (the only source of knowledge):
 <syllabus>
 {syllabus}
 </syllabus>"""
+
+
+def parse_quiz_response(content):
+    if not isinstance(content, str):
+        raise ValueError("Ollama returned an empty quiz response.")
+
+    content = content.strip()
+    if content.startswith("```"):
+        content = content.partition("\n")[2].strip()
+        if content.endswith("```"):
+            content = content[:-3].strip()
+
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        if start < 0:
+            raise ValueError(
+                "Ollama did not return a JSON quiz. Try again or choose a different hosted model."
+            )
+
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(content)):
+            character = content[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif character == "\\":
+                    escaped = True
+                elif character == '"':
+                    in_string = False
+            elif character == '"':
+                in_string = True
+            elif character == "{":
+                depth += 1
+            elif character == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        return json.loads(content[start:index + 1])
+                    except json.JSONDecodeError:
+                        break
+
+    raise ValueError(
+        "Ollama returned an incomplete or invalid quiz response. "
+        "Try fewer questions or a shorter syllabus."
+    )
 
 
 def ollama_chat_url(base_url):
@@ -171,6 +220,23 @@ def validate_quiz(payload, syllabus, count, marks):
 
 def request_quiz(syllabus, title, count, difficulty, marks, diagnostics=None):
     url = ollama_chat_url(OLLAMA_BASE_URL)
+    request_body = {
+        "model": OLLAMA_MODEL,
+        "messages": [
+            {
+                "role": "user",
+                "content": build_prompt(syllabus, title, count, difficulty, marks),
+            }
+        ],
+        "stream": False,
+        "options": {
+            "temperature": 0.1,
+            "num_predict": max(4096, min(24000, count * 800)),
+        },
+    }
+    if urlparse(OLLAMA_BASE_URL).hostname != "ollama.com":
+        request_body["format"] = "json"
+
     if diagnostics is not None:
         diagnostics.update(final_url=url, http_status_code="Not received", model=OLLAMA_MODEL)
     try:
@@ -180,32 +246,37 @@ def request_quiz(syllabus, title, count, difficulty, marks, diagnostics=None):
                 "Authorization": f"Bearer {OLLAMA_API_KEY}",
                 "Content-Type": "application/json",
             },
-            json={
-                "model": OLLAMA_MODEL,
-                "messages": [
-                    {
-                        "role": "user",
-                        "content": build_prompt(syllabus, title, count, difficulty, marks),
-                    }
-                ],
-                "stream": False,
-                "format": "json",
-                "options": {"temperature": 0.1},
-            },
+            json=request_body,
             timeout=300,
         )
         if diagnostics is not None:
             diagnostics["http_status_code"] = response.status_code
+        if response.status_code == 404 and urlparse(OLLAMA_BASE_URL).hostname == "ollama.com":
+            raise ValueError(
+                f"Ollama Cloud returned 404 for model '{OLLAMA_MODEL}'. "
+                "Choose a hosted model from https://ollama.com/api/tags "
+                "(for example, gemma4:31b) and update OLLAMA_MODEL."
+            )
         response.raise_for_status()
-        message = response.json().get("message", {})
-        if message.get("role") != "assistant":
+        try:
+            response_data = response.json()
+        except requests.exceptions.JSONDecodeError as error:
+            raise ValueError(
+                f"Ollama returned a non-JSON API response (HTTP {response.status_code}). "
+                "Check the endpoint and try again."
+            ) from error
+        if not isinstance(response_data, dict):
+            raise ValueError("Ollama returned an unexpected API response. Try again.")
+        message = response_data.get("message", {})
+        if not isinstance(message, dict) or message.get("role") != "assistant":
             raise ValueError("Ollama Cloud response did not contain an assistant message.")
-        content = message.get("content", "")
-        quiz = json.loads(content)
+        if response_data.get("done_reason") == "length":
+            raise ValueError(
+                "Ollama stopped before finishing the quiz. Try fewer questions or a shorter syllabus."
+            )
+        quiz = parse_quiz_response(message.get("content", ""))
     except requests.RequestException as error:
         raise ValueError(f"Could not reach Ollama at {url}: {error}") from error
-    except (json.JSONDecodeError, TypeError) as error:
-        raise ValueError("Ollama returned invalid JSON. Try generating again.") from error
     return validate_quiz(quiz, syllabus, count, marks)
 
 
@@ -352,7 +423,10 @@ with col_two:
 
 if generate:
     if CONFIG_ERRORS:
-        st.error("Correct the missing or invalid Ollama values in the project .env file before generating a quiz.")
+        st.error(
+            "Correct the missing or invalid Ollama values in Streamlit Secrets "
+            "(or the local project .env file) before generating a quiz."
+        )
     elif not syllabus.strip():
         st.error("Provide an active syllabus before generating a quiz.")
     elif not quiz_title.strip():
