@@ -33,7 +33,7 @@ ollama pull llama3.2
 ## Deploy on Streamlit Community Cloud
 
 1. Push this repository to GitHub and create an app at [share.streamlit.io](https://share.streamlit.io/).
-2. Select this repository and the `main` branch. Set **Main file path** to `llm project/app.py`. Streamlit Cloud installs dependencies from the repository-root `requirements.txt`.
+2. Select this repository and the `main` branch. Set **Main file path** to `llm_project/app.py`. Set the dependency file to `llm_project/requirements.txt` (or use the repository-root `requirements.txt`). These paths intentionally contain no spaces so Streamlit Cloud can pass them to its package installer correctly.
 3. In the app's **Settings → Secrets**, add the following TOML values using your real, internet-accessible Ollama service settings:
 
    ```toml
@@ -47,12 +47,14 @@ ollama pull llama3.2
 
 The app reads Streamlit secrets on Cloud and falls back to the local `.env` file/environment when no Streamlit secrets file is configured.
 
-## Run
+## Run locally
 
 ```bash
 streamlit run app.py
 ```
 
-Paste a syllabus or upload a `.txt`/`.md` syllabus, configure the Ollama URL and a model available at that endpoint, then generate and download a PDF or Markdown quiz. Generation requires an exact syllabus quotation for every question; questions failing that check are rejected. Ollama Cloud does not support its structured-output format option, so the app requests JSON in the prompt and validates the result. If a response is cut off, reduce the question count or shorten the syllabus and try again.
+Paste the syllabus, choose **Easy**, **Medium**, or **Hard**, set the number of questions (1–50), then click **Generate quiz**. The app requests exactly the selected number of multiple-choice questions at the selected difficulty and offers PDF, Markdown, and JSON downloads. It returns fewer only when the syllabus cannot support more distinct questions without inventing facts, and tells the user when that happens. It does not require a file upload or Excel template.
 
-No quiz template was present in the source repository when this project was created, so the PDF uses a standard layout: heading, numbered questions, A-D options, difficulty, marks, and a separate evidence-backed answer key.
+The model is instructed to use only syllabus information and return a JSON array with `question`, `option_a`, `option_b`, `option_c`, `option_d`, and `answer` fields. The app validates the JSON shape and removes duplicate questions. Ollama Cloud does not support its structured-output format option, so the app requests JSON in the prompt and validates the result. If a response is cut off, shorten the syllabus and try again.
+
+No quiz template was present in the source repository when this project was created, so the PDF uses a standard layout with numbered questions, A-D options, and a separate answer key.
